@@ -6,6 +6,7 @@ Makefile
 go.mod
 go.sum
 scripts/hooks/
+scripts/publish/
 .claude/
 .git/
 .idea/

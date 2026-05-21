@@ -9,9 +9,10 @@ dist/
 CLAUDE.md
 pages/package-lock.json
 scripts/hooks/
+scripts/publish/.env.internal
 CHANGELOG.md
 
-verdor/
+vendor/
 temp/
 
 # Ignore downloaded Go binary, but keep JS entry point
