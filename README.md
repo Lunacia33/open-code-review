@@ -1,3 +1,9 @@
+<div align="center">
+
+English | [简体中文](README.zh-CN.md)
+
+</div>
+
 # OpenCodeReview
 
 AI-powered code review CLI that reads Git diffs, sends changed files to a configurable LLM via an agent with tool-use capabilities, and generates structured review comments with line-level precision.
