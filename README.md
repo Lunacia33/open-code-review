@@ -6,13 +6,11 @@
 <p align="center">The open source AI code review agent.</p>
 <p align="center">
   <a href="https://www.npmjs.com/package/@alibaba-group/open-code-review"><img alt="npm" src="https://img.shields.io/npm/v/@alibaba-group/open-code-review?style=flat-square" /></a>
-  <a href="https://github.com/alibaba/open-code-review/actions"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/alibaba/open-code-review/publish.yml?style=flat-square&branch=main" /></a>
+  <a href="https://github.com/alibaba/open-code-review/actions/workflows/release.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/alibaba/open-code-review/release.yml?style=flat-square&branch=main" /></a>
   <a href="https://github.com/alibaba/open-code-review/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/alibaba/open-code-review?style=flat-square" /></a>
 </p>
 <p align="center">
-
-English | [简体中文](README.zh-CN.md)
-
+  English | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
 ---
