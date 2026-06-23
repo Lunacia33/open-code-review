@@ -108,6 +108,9 @@ type reviewOptions struct {
 	perFileTimeout int
 	maxTools       int
 	maxGitProcs    int
+	queryBackend   string
+	queryIndex     string
+	queryScope     string
 	preview        bool
 	showHelp       bool
 }
@@ -130,6 +133,9 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	a.StringVarP(&opts.background, "background", "b", "", "optional requirement/business context for the review")
 	a.IntVar(&opts.maxTools, "max-tools", 0, "max tool call rounds per file (0 = template default; min 10)")
 	a.IntVar(&opts.maxGitProcs, "max-git-procs", 16, "max concurrent git subprocesses")
+	a.StringVar(&opts.queryBackend, "query-backend", "git", "context query backend: git or local-index")
+	a.StringVar(&opts.queryIndex, "query-index", "", "directory containing local-index files.jsonl/grep_index.jsonl")
+	a.StringVar(&opts.queryScope, "query-scope", "", "comma-separated path prefixes that bound local-index searches")
 	a.BoolVarP(&opts.preview, "preview", "p", false, "preview which files will be reviewed without running the LLM")
 
 	if err := a.Parse(args); err != nil {
@@ -174,6 +180,11 @@ func parseReviewFlags(args []string) (reviewOptions, error) {
 	if opts.maxGitProcs < 0 {
 		return opts, fmt.Errorf("--max-git-procs must be a non-negative integer (0 means use default 16)")
 	}
+	switch opts.queryBackend {
+	case "git", "local-index":
+	default:
+		return opts, fmt.Errorf("invalid --query-backend value %q: must be 'git' or 'local-index'", opts.queryBackend)
+	}
 
 	return opts, nil
 }
@@ -214,6 +225,9 @@ Flags:
   -f, --format string     output format: text or json (default "text")
   --concurrency int       max concurrent file reviews (default 8)
   --max-git-procs int     max concurrent git subprocesses (default 16)
+  --query-backend string  context query backend: git or local-index (default "git")
+  --query-index string    directory containing local-index files.jsonl/grep_index.jsonl
+  --query-scope string    comma-separated path prefixes that bound local-index searches
   --from string           source ref to start diff from (e.g., 'main')
   --max-tools int         max tool call rounds per file (0 = template default; min 10)
   -p, --preview           preview which files will be reviewed without running the LLM

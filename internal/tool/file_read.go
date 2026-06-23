@@ -11,9 +11,12 @@ const fileReadMaxLines = 500
 // FileReadProvider reads file content at a given path and optional line range.
 type FileReadProvider struct {
 	FileReader *FileReader
+	Backend    QueryBackend
 }
 
-func NewFileRead(fr *FileReader) *FileReadProvider { return &FileReadProvider{FileReader: fr} }
+func NewFileRead(fr *FileReader) *FileReadProvider {
+	return &FileReadProvider{FileReader: fr, Backend: NewGitQueryBackend(fr)}
+}
 
 func (p *FileReadProvider) Tool() Tool { return FileRead }
 
@@ -43,7 +46,7 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		}
 	}
 
-	lines, totalLines, err := p.FileReader.ReadLines(ctx, filePath, int(startLine), maxLines)
+	lines, totalLines, err := p.readLines(ctx, filePath, int(startLine), maxLines)
 	if err != nil {
 		return "", fmt.Errorf("file %q not found: %w", filePath, err)
 	}
@@ -72,4 +75,13 @@ func (p *FileReadProvider) Execute(ctx context.Context, args map[string]any) (st
 		sb.WriteString(fmt.Sprintf("\nNote: Results truncated to %d lines. Please narrow your line range.\n", fileReadMaxLines))
 	}
 	return sb.String(), nil
+}
+
+func (p *FileReadProvider) readLines(ctx context.Context, path string, startLine, maxLines int) ([]string, int, error) {
+	backend := p.Backend
+	if backend == nil {
+		backend = NewGitQueryBackend(p.FileReader)
+	}
+	lines, totalLines, _, err := backend.ReadLines(ctx, path, startLine, maxLines)
+	return lines, totalLines, err
 }

@@ -132,6 +132,210 @@
     }
   },
   {
+    "name": "symbol_definition",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "symbol_definition",
+      "description": "Find likely declaration or definition candidates for a symbol. Use this before judging changes whose correctness depends on a function, class, field, module, or API contract. Results are bounded by query backend scope and include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "Symbol, class, function, field, or module name to locate."
+          },
+          "path_hint": {
+            "type": "string",
+            "description": "Optional file or directory scope hint. Prefer the changed file directory or module directory."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded search scope. In P4/local-index mode this must stay narrow."
+          }
+        },
+        "required": [
+          "symbol"
+        ]
+      }
+    }
+  },
+  {
+    "name": "symbol_references",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "symbol_references",
+      "description": "Find bounded reference candidates for a symbol, grouped by file. Use this for caller/callee, field usage, registration, or API compatibility checks. Results include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "Symbol, function, field, class, or API name to search references for."
+          },
+          "path_hint": {
+            "type": "string",
+            "description": "Optional file or directory scope hint."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded search scope."
+          }
+        },
+        "required": [
+          "symbol"
+        ]
+      }
+    }
+  },
+  {
+    "name": "call_graph",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "call_graph",
+      "description": "Build a lightweight text-based caller/callee candidate view for a function. This is an approximate bounded context tool, not a full compiler call graph. Results include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "function": {
+            "type": "string",
+            "description": "Function or method name to inspect."
+          },
+          "path_hint": {
+            "type": "string",
+            "description": "Optional file or directory scope hint."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded search scope."
+          },
+          "depth": {
+            "type": "integer",
+            "description": "Requested graph depth. Current implementation is a bounded text approximation."
+          }
+        },
+        "required": [
+          "function"
+        ]
+      }
+    }
+  },
+  {
+    "name": "cpp_decl_context",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "cpp_decl_context",
+      "description": "Read likely C++ header declaration context for a changed .cpp method and search nearby declaration scope for the symbol. Use for member functions, UFUNCTION/UPROPERTY, ownership, override, and lifecycle checks. Results include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Changed .cpp/.cc/.cxx file path."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "Optional method, class, or field name to focus on."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded search scope."
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "ue_asset_refs",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "ue_asset_refs",
+      "description": "Search pre-exported UE asset or Blueprint metadata for references to a class, function, property, or delegate. This must use bounded local-index/metadata scope, not live full-asset scanning. Results include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "UE class, function, property, delegate, or asset name."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded metadata scope."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  {
+    "name": "thread_context",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "thread_context",
+      "description": "Search bounded lifecycle/threading context around async tasks, timers, locks, owner destroy, unregister, cancel, or weak references. Use for concurrency, callback, and lifetime-sensitive diffs. Results include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "Symbol, owner, task, delegate, or path hint related to the lifecycle risk."
+          },
+          "path_hint": {
+            "type": "string",
+            "description": "Optional file or directory scope hint."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded search scope."
+          }
+        },
+        "required": [
+          "symbol"
+        ]
+      }
+    }
+  },
+  {
+    "name": "lua_state_context",
+    "plan_task": true,
+    "main_task": true,
+    "definition": {
+      "name": "lua_state_context",
+      "description": "Search Lua module state context: initialization, assignments, event/callback registration, unregister, and state field usage. Use for Lua UI/state/event review gaps. Results include QUERY_COST.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "symbol": {
+            "type": "string",
+            "description": "Lua function, state field, module, or callback name."
+          },
+          "field": {
+            "type": "string",
+            "description": "Optional Lua state field name."
+          },
+          "path_hint": {
+            "type": "string",
+            "description": "Optional file or directory scope hint."
+          },
+          "scope": {
+            "type": "string",
+            "description": "Optional bounded search scope."
+          }
+        },
+        "required": [
+          "symbol"
+        ]
+      }
+    }
+  },
+  {
     "name": "file_read_diff",
     "plan_task": true,
     "main_task": true,

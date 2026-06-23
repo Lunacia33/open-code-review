@@ -18,6 +18,14 @@ var (
 	FileFind     = Tool{name: "file_find"}
 	FileReadDiff = Tool{name: "file_read_diff"}
 	CodeSearch   = Tool{name: "code_search"}
+
+	SymbolDefinition = Tool{name: "symbol_definition"}
+	SymbolReferences = Tool{name: "symbol_references"}
+	CallGraph        = Tool{name: "call_graph"}
+	CppDeclContext   = Tool{name: "cpp_decl_context"}
+	UEAssetRefs      = Tool{name: "ue_asset_refs"}
+	ThreadContext    = Tool{name: "thread_context"}
+	LuaStateContext  = Tool{name: "lua_state_context"}
 )
 
 func OfName(name string) Tool {
@@ -30,7 +38,11 @@ func OfName(name string) Tool {
 }
 
 func allTools() []Tool {
-	return []Tool{Unknown, TaskDone, CodeComment, FileRead, FileFind, FileReadDiff, CodeSearch}
+	return []Tool{
+		Unknown, TaskDone, CodeComment, FileRead, FileFind, FileReadDiff, CodeSearch,
+		SymbolDefinition, SymbolReferences, CallGraph, CppDeclContext, UEAssetRefs,
+		ThreadContext, LuaStateContext,
+	}
 }
 
 // Name returns the tool's identifier name.

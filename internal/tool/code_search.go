@@ -19,9 +19,12 @@ const (
 // CodeSearchProvider performs text search across the repository using git grep.
 type CodeSearchProvider struct {
 	FileReader *FileReader
+	Backend    QueryBackend
 }
 
-func NewCodeSearch(fr *FileReader) *CodeSearchProvider { return &CodeSearchProvider{FileReader: fr} }
+func NewCodeSearch(fr *FileReader) *CodeSearchProvider {
+	return &CodeSearchProvider{FileReader: fr, Backend: NewGitQueryBackend(fr)}
+}
 
 func (p *CodeSearchProvider) Tool() Tool { return CodeSearch }
 
@@ -42,11 +45,20 @@ func (p *CodeSearchProvider) Execute(ctx context.Context, args map[string]any) (
 		return "Error: search_text is blank", nil
 	}
 
-	result, err := p.gitGrep(ctx, searchText, caseSensitive, usePerlRegexp, patterns)
+	result, err := p.search(ctx, searchText, caseSensitive, usePerlRegexp, patterns)
 	if err != nil {
 		return "", fmt.Errorf("code_search failed: %w", err)
 	}
 	return result, nil
+}
+
+func (p *CodeSearchProvider) search(ctx context.Context, searchText string, caseSensitive bool, usePerlRegexp bool, patterns []string) (string, error) {
+	backend := p.Backend
+	if backend == nil {
+		backend = NewGitQueryBackend(p.FileReader)
+	}
+	result, _, err := backend.Search(ctx, searchText, caseSensitive, usePerlRegexp, patterns, gitGrepMaxCount)
+	return result, err
 }
 
 func (p *CodeSearchProvider) buildGrepArgs(searchText string, caseSensitive bool, usePerlRegexp bool, pathspec []string) []string {

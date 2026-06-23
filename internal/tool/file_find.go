@@ -16,9 +16,12 @@ const (
 // FileFindProvider finds files by name or pattern in the repository using git ls-files.
 type FileFindProvider struct {
 	FileReader *FileReader
+	Backend    QueryBackend
 }
 
-func NewFileFind(fr *FileReader) *FileFindProvider { return &FileFindProvider{FileReader: fr} }
+func NewFileFind(fr *FileReader) *FileFindProvider {
+	return &FileFindProvider{FileReader: fr, Backend: NewGitQueryBackend(fr)}
+}
 
 func (p *FileFindProvider) Tool() Tool { return FileFind }
 
@@ -30,35 +33,24 @@ func (p *FileFindProvider) Execute(ctx context.Context, args map[string]any) (st
 
 	caseSensitive, _ := args["case_sensitive"].(bool)
 
-	files, err := p.listGitFiles(ctx)
+	files, err := p.findFiles(ctx, queryName, caseSensitive)
 	if err != nil {
 		return "", err
 	}
 
-	var matched []string
-	for _, f := range files {
-		base := f
-		if idx := strings.LastIndex(f, "/"); idx != -1 {
-			base = f[idx+1:]
-		}
-		match := false
-		if caseSensitive {
-			match = strings.Contains(base, queryName)
-		} else {
-			match = strings.Contains(strings.ToLower(base), strings.ToLower(queryName))
-		}
-		if match {
-			matched = append(matched, f)
-		}
-		if len(matched) >= fileFindMaxCount {
-			break
-		}
-	}
-
-	if len(matched) == 0 {
+	if len(files) == 0 {
 		return "// The file was not found", nil
 	}
-	return strings.Join(matched, "\n"), nil
+	return strings.Join(files, "\n"), nil
+}
+
+func (p *FileFindProvider) findFiles(ctx context.Context, queryName string, caseSensitive bool) ([]string, error) {
+	backend := p.Backend
+	if backend == nil {
+		backend = NewGitQueryBackend(p.FileReader)
+	}
+	files, _, err := backend.FindFiles(ctx, queryName, caseSensitive, fileFindMaxCount)
+	return files, err
 }
 
 // listGitFiles returns tracked and untracked files (respecting .gitignore) via git ls-files.

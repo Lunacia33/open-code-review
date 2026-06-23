@@ -65,6 +65,9 @@ func runReview(args []string) error {
 	}
 
 	if opts.preview {
+		if _, err := buildQueryBackend(opts, nil); err != nil {
+			return err
+		}
 		return runPreview(repoDir, opts, fileFilter)
 	}
 
@@ -107,7 +110,11 @@ func runReview(args []string) error {
 		Ref:     ref,
 		Runner:  gitRunner,
 	}
-	tools := buildToolRegistry(collector, fileReader)
+	queryBackend, err := buildQueryBackend(opts, fileReader)
+	if err != nil {
+		return err
+	}
+	tools := buildToolRegistry(collector, fileReader, queryBackend)
 
 	ag := agent.New(agent.Args{
 		RepoDir:               repoDir,
@@ -267,12 +274,36 @@ func runPreview(repoDir string, opts reviewOptions, fileFilter *rules.FileFilter
 	return nil
 }
 
-func buildToolRegistry(collector *tool.CommentCollector, fr *tool.FileReader) *tool.Registry {
+func buildQueryBackend(opts reviewOptions, fr *tool.FileReader) (tool.QueryBackend, error) {
+	switch opts.queryBackend {
+	case "", "git":
+		if fr == nil {
+			return nil, nil
+		}
+		return tool.NewGitQueryBackend(fr), nil
+	case "local-index":
+		return tool.NewLocalIndexQueryBackend(opts.queryIndex, []string{opts.queryScope})
+	default:
+		return nil, fmt.Errorf("invalid --query-backend value %q", opts.queryBackend)
+	}
+}
+
+func buildToolRegistry(collector *tool.CommentCollector, fr *tool.FileReader, backend tool.QueryBackend) *tool.Registry {
+	if backend == nil {
+		backend = tool.NewGitQueryBackend(fr)
+	}
 	reg := tool.NewRegistry()
-	reg.Register(tool.NewFileRead(fr))
-	reg.Register(tool.NewFileFind(fr))
+	reg.Register(&tool.FileReadProvider{FileReader: fr, Backend: backend})
+	reg.Register(&tool.FileFindProvider{FileReader: fr, Backend: backend})
 	reg.Register(tool.NewFileReadDiff(tool.DiffMap{}))
-	reg.Register(tool.NewCodeSearch(fr))
+	reg.Register(&tool.CodeSearchProvider{FileReader: fr, Backend: backend})
+	reg.Register(tool.NewContextTool(tool.SymbolDefinition, backend))
+	reg.Register(tool.NewContextTool(tool.SymbolReferences, backend))
+	reg.Register(tool.NewContextTool(tool.CallGraph, backend))
+	reg.Register(tool.NewContextTool(tool.CppDeclContext, backend))
+	reg.Register(tool.NewContextTool(tool.UEAssetRefs, backend))
+	reg.Register(tool.NewContextTool(tool.ThreadContext, backend))
+	reg.Register(tool.NewContextTool(tool.LuaStateContext, backend))
 	reg.Register(&tool.CodeCommentProvider{Collector: collector})
 	return reg
 }
