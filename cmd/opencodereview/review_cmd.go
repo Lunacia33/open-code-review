@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"github.com/alibaba/open-code-review/internal/agent"
 	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/mcp"
+	"github.com/alibaba/open-code-review/internal/reviewsource"
 	"github.com/alibaba/open-code-review/internal/session"
 	"github.com/alibaba/open-code-review/internal/telemetry"
 	"github.com/alibaba/open-code-review/internal/tool"
@@ -25,6 +28,9 @@ import (
 )
 
 type reviewOptions struct {
+	reviewSource    string
+	sourceManifest  string
+	sourceSocket    string
 	toolConfigPath  string
 	rulePath        string
 	repoDir         string
@@ -103,18 +109,40 @@ func init() {
 }
 
 func executeReview(opts reviewOptions) error {
-	cc, err := loadCommonContext(opts.repoDir, opts.rulePath, opts.maxTools, opts.maxGitProcs, true)
+	var source reviewsource.ReviewSource
+	var sourceIdentity reviewsource.SourceIdentity
+	var cc *commonContext
+	var err error
+	if opts.reviewSource == "p4-submitted" {
+		source, err = reviewsource.OpenP4(opts.sourceManifest, opts.sourceSocket)
+		if err != nil {
+			return fmt.Errorf("open P4 review source: %w", err)
+		}
+		var ok bool
+		sourceIdentity, ok = reviewsource.Identity(source)
+		if !ok {
+			return errors.New("P4 review source did not expose its manifest identity")
+		}
+		if err := validateSourceRuleArtifact(opts.rulePath, sourceIdentity.RuleArtifactSHA256); err != nil {
+			return err
+		}
+		cc, err = loadSourceCommonContext(opts.repoDir, opts.rulePath, opts.maxTools)
+	} else {
+		cc, err = loadCommonContext(opts.repoDir, opts.rulePath, opts.maxTools, opts.maxGitProcs, true)
+	}
 	if err != nil {
 		return err
 	}
 	applyCLIExcludes(cc, splitPaths(opts.excludes))
 
 	// Security (#112): reject ref-option injection before any git invocation.
-	if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
-		return err
+	if source == nil {
+		if err := validateReviewRefs(cc.RepoDir, opts); err != nil {
+			return err
+		}
 	}
 
-	if opts.commit != "" && opts.background == "" {
+	if source == nil && opts.commit != "" && opts.background == "" {
 		if msg, err := getCommitMessage(cc.RepoDir, opts.commit); err == nil && msg != "" {
 			opts.background = msg
 		}
@@ -135,7 +163,7 @@ func executeReview(opts reviewOptions) error {
 	}
 
 	if opts.preview {
-		return runPreview(cc, opts)
+		return runPreviewWithSource(cc, opts, source, sourceIdentity)
 	}
 
 	resumeState, err := loadReviewResumeState(cc.RepoDir, opts)
@@ -161,17 +189,25 @@ func executeReview(opts reviewOptions) error {
 		Model:    rt.Model,
 	}
 
-	mode := tool.ParseReviewMode(opts.from, opts.to, opts.commit)
-	ref, _ := mode.RefValue(opts.to, opts.commit)
-	fileReader := &tool.FileReader{
-		RepoDir: cc.RepoDir,
-		Mode:    mode,
-		Ref:     ref,
-		Runner:  cc.GitRunner,
+	var tools *tool.Registry
+	if source != nil {
+		tools = buildSourceToolRegistry(rt.Collector, source.View())
+	} else {
+		mode := tool.ParseReviewMode(opts.from, opts.to, opts.commit)
+		ref, _ := mode.RefValue(opts.to, opts.commit)
+		fileReader := &tool.FileReader{
+			RepoDir: cc.RepoDir,
+			Mode:    mode,
+			Ref:     ref,
+			Runner:  cc.GitRunner,
+		}
+		tools = buildToolRegistry(rt.Collector, fileReader)
 	}
-	tools := buildToolRegistry(rt.Collector, fileReader)
 
-	mcpClients := initMCPClients(context.Background(), rt.AppCfg, tools, cc.RepoDir, Version)
+	var mcpClients []*mcp.Client
+	if source == nil {
+		mcpClients = initMCPClients(context.Background(), rt.AppCfg, tools, cc.RepoDir, Version)
+	}
 	defer func() {
 		for _, mc := range mcpClients {
 			if err := mc.Close(); err != nil {
@@ -186,6 +222,8 @@ func executeReview(opts reviewOptions) error {
 
 	ag := agent.New(agent.Args{
 		RepoDir:               cc.RepoDir,
+		ReviewSource:          source,
+		SourceIdentity:        sourceIdentity,
 		From:                  opts.from,
 		To:                    opts.to,
 		Commit:                opts.commit,
@@ -314,6 +352,9 @@ func loadReviewResumeState(repoDir string, opts reviewOptions) (*session.ResumeS
 }
 
 func reviewModeFromOptions(opts reviewOptions) string {
+	if opts.reviewSource == "p4-submitted" {
+		return session.ReviewModeP4Submitted
+	}
 	if opts.commit != "" {
 		return session.ReviewModeCommit
 	}
@@ -375,19 +416,57 @@ func validateReviewRefs(repoDir string, opts reviewOptions) error {
 }
 
 func runPreview(cc *commonContext, opts reviewOptions) error {
+	var source reviewsource.ReviewSource
+	var identity reviewsource.SourceIdentity
+	if opts.reviewSource == "p4-submitted" {
+		var err error
+		source, err = reviewsource.OpenP4(opts.sourceManifest, opts.sourceSocket)
+		if err != nil {
+			return fmt.Errorf("open P4 review source: %w", err)
+		}
+		identity, _ = reviewsource.Identity(source)
+	}
+	return runPreviewWithSource(cc, opts, source, identity)
+}
+
+func runPreviewWithSource(cc *commonContext, opts reviewOptions, source reviewsource.ReviewSource, identity reviewsource.SourceIdentity) error {
 	preview, err := agent.Preview(context.Background(), agent.Args{
-		RepoDir:    cc.RepoDir,
-		From:       opts.from,
-		To:         opts.to,
-		Commit:     opts.commit,
-		FileFilter: cc.FileFilter,
-		GitRunner:  cc.GitRunner,
+		RepoDir:        cc.RepoDir,
+		ReviewSource:   source,
+		SourceIdentity: identity,
+		From:           opts.from,
+		To:             opts.to,
+		Commit:         opts.commit,
+		FileFilter:     cc.FileFilter,
+		GitRunner:      cc.GitRunner,
 	})
 	if err != nil {
 		return fmt.Errorf("preview failed: %w", err)
 	}
 
 	return outputPreview(preview, opts.outputFormat)
+}
+
+func validateSourceRuleArtifact(rulePath, expectedSHA256 string) error {
+	if rulePath == "" && expectedSHA256 == "" {
+		return nil
+	}
+	if rulePath == "" || expectedSHA256 == "" {
+		return errors.New("P4 source rule artifact and rule_artifact_sha256 must either both be present or both be absent")
+	}
+	if !filepath.IsAbs(rulePath) {
+		return errors.New("--rule must be an absolute path with --review-source p4-submitted")
+	}
+	raw, err := os.ReadFile(rulePath)
+	if err != nil {
+		return fmt.Errorf("read source rule artifact: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	actual := hex.EncodeToString(sum[:])
+	if actual != expectedSHA256 {
+		return fmt.Errorf("source rule artifact SHA-256 mismatch: got %s, want %s", actual, expectedSHA256)
+	}
+	return nil
 }
 
 func initMCPClients(ctx context.Context, cfg *Config, tools *tool.Registry, repoDir, version string) []*mcp.Client {

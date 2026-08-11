@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -103,6 +104,31 @@ func validateAudience(audience string) error {
 }
 
 func validateReviewOptions(opts *reviewOptions) error {
+	switch opts.reviewSource {
+	case "", "git":
+		opts.reviewSource = "git"
+		if opts.sourceManifest != "" || opts.sourceSocket != "" {
+			return fmt.Errorf("--source-manifest and --source-socket require --review-source p4-submitted")
+		}
+	case "p4-submitted":
+		if opts.from != "" || opts.to != "" || opts.commit != "" || opts.resume != "" {
+			return fmt.Errorf("--review-source p4-submitted cannot be combined with --from, --to, --commit, or --resume")
+		}
+		if opts.sourceManifest == "" || opts.sourceSocket == "" {
+			return fmt.Errorf("--review-source p4-submitted requires --source-manifest and --source-socket")
+		}
+		if !filepath.IsAbs(opts.sourceManifest) || !filepath.IsAbs(opts.sourceSocket) {
+			return fmt.Errorf("--source-manifest and --source-socket must be absolute paths")
+		}
+		if opts.repoDir == "" {
+			return fmt.Errorf("--review-source p4-submitted requires --repo as a non-Git runtime root")
+		}
+		if opts.toolConfigPath != "" {
+			return fmt.Errorf("--tools is not supported with --review-source p4-submitted")
+		}
+	default:
+		return fmt.Errorf("invalid --review-source value %q: must be 'git' or 'p4-submitted'", opts.reviewSource)
+	}
 	if err := validateDiffMode(opts.from, opts.to, opts.commit); err != nil {
 		return err
 	}
@@ -166,6 +192,9 @@ func validateDelegateOptions(opts *delegateOptions) error {
 
 // registerReviewFlags registers all review command flags on cmd, binding to opts.
 func registerReviewFlags(cmd *cobra.Command, opts *reviewOptions) {
+	cmd.Flags().StringVar(&opts.reviewSource, "review-source", "git", "review input source: git or p4-submitted")
+	cmd.Flags().StringVar(&opts.sourceManifest, "source-manifest", "", "absolute path to a hash-bound source manifest")
+	cmd.Flags().StringVar(&opts.sourceSocket, "source-socket", "", "absolute path to the local source-service socket")
 	addToolsFlag(cmd, &opts.toolConfigPath)
 	addRuleFlag(cmd, &opts.rulePath)
 	addRepoFlag(cmd, &opts.repoDir)

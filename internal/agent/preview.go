@@ -5,6 +5,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	allowedext "github.com/alibaba/open-code-review/internal/config/allowlist"
@@ -106,6 +108,24 @@ func (a *Agent) preview(ctx context.Context) (*DiffPreview, error) {
 		}
 
 		result.Entries = append(result.Entries, entry)
+	}
+	if a.args.ReviewSource != nil {
+		receipt, err := a.args.ReviewSource.View().FinalizeReceipt(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("finalize source preview receipt: %w", err)
+		}
+		scope := sha256.Sum256([]byte(a.args.SourceIdentity.SessionScopeKey))
+		result.Source = &model.PreviewSource{
+			InputMode:                a.args.SourceIdentity.Mode,
+			RepositoryIdentitySHA256: a.args.SourceIdentity.RepositoryIdentitySHA256,
+			SourceManifestSHA256:     a.args.SourceIdentity.ManifestSHA256,
+			SessionScopeSHA256:       hex.EncodeToString(scope[:]),
+			SubmittedCL:              a.args.SourceIdentity.SubmittedCL,
+			ReceiptSchema:            receipt.SchemaVersion,
+			QueryCount:               receipt.QueryCount,
+			LedgerSHA256:             receipt.LedgerSHA256,
+			ReceiptSHA256:            receipt.ReceiptSHA256,
+		}
 	}
 
 	return result, nil

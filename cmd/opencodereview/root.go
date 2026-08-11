@@ -34,6 +34,7 @@ func init() {
 	rootCmd.Flags().BoolP("version", "V", false, "version for ocr")
 
 	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(capabilitiesCmd)
 	rootCmd.AddCommand(reviewCmd)
 	rootCmd.AddCommand(scanCmd)
 	rootCmd.AddCommand(delegateCmd)

@@ -30,6 +30,7 @@ import (
 	"github.com/alibaba/open-code-review/internal/llm"
 	"github.com/alibaba/open-code-review/internal/llmloop"
 	"github.com/alibaba/open-code-review/internal/model"
+	"github.com/alibaba/open-code-review/internal/reviewsource"
 	"github.com/alibaba/open-code-review/internal/session"
 	"github.com/alibaba/open-code-review/internal/stdout"
 	"github.com/alibaba/open-code-review/internal/telemetry"
@@ -52,8 +53,13 @@ func NewCommentWorkerPool(workerCount int) *CommentWorkerPool {
 
 // Args holds all dependencies and configuration needed to run a review session.
 type Args struct {
-	// RepoDir is the root of the git repository.
+	// RepoDir is the Git repository root or the non-Git runtime root.
 	RepoDir string
+
+	// ReviewSource replaces the Git diff/read surface for a native source.
+	// SourceIdentity must come from the same already-validated instance.
+	ReviewSource   reviewsource.ReviewSource
+	SourceIdentity reviewsource.SourceIdentity
 
 	// From and To define the diff range (e.g., "main..feature-branch").
 	From string
@@ -195,7 +201,10 @@ func New(args Args) *Agent {
 		args.CommentCollector = tool.NewCommentCollector()
 	}
 	if args.Session == nil {
-		gitBranch := detectGitBranch(context.Background(), args.RepoDir)
+		gitBranch := args.SourceIdentity.SessionScopeKey
+		if args.ReviewSource == nil {
+			gitBranch = detectGitBranch(context.Background(), args.RepoDir)
+		}
 		mode := args.ReviewMode
 		if mode == "" {
 			mode = reviewModeString(args.From, args.To, args.Commit)
@@ -433,6 +442,22 @@ func (a *Agent) recordWarning(warningType, file, message string) {
 
 // loadDiffs populates the diff-related fields.
 func (a *Agent) loadDiffs(ctx context.Context) error {
+	if a.args.ReviewSource != nil {
+		parsed, identity, err := a.args.ReviewSource.ResolveDiffs(ctx)
+		if err != nil {
+			return fmt.Errorf("resolve source diffs: %w", err)
+		}
+		if identity != a.args.SourceIdentity {
+			return errors.New("review source identity changed after validation")
+		}
+		a.diffs = parsed
+		for i := range parsed {
+			a.totalInsertions += parsed[i].Insertions
+			a.totalDeletions += parsed[i].Deletions
+		}
+		return nil
+	}
+
 	var provider *diff.Provider
 
 	switch {
@@ -771,6 +796,9 @@ func (a *Agent) initManifest() {
 // and stays stable across a resume chain (independent of an explicit ReviewMode
 // label). It is also the mode component of every item_id.
 func (a *Agent) manifestMode() string {
+	if a.args.ReviewSource != nil {
+		return session.InputModeP4Submitted
+	}
 	return reviewModeString(a.args.From, a.args.To, a.args.Commit)
 }
 
@@ -785,6 +813,11 @@ func (a *Agent) manifestInput() session.ManifestInput {
 		in.RequestedHead = a.args.To
 	case session.InputModeCommit:
 		in.RequestedHead = a.args.Commit
+	case session.InputModeP4Submitted:
+		in.SourceManifestSHA256 = a.args.SourceIdentity.ManifestSHA256
+		scope := sha256.Sum256([]byte(a.args.SourceIdentity.SessionScopeKey))
+		in.SessionScopeSHA256 = hex.EncodeToString(scope[:])
+		in.SubmittedCL = a.args.SourceIdentity.SubmittedCL
 	}
 	return in
 }
@@ -798,13 +831,17 @@ func (a *Agent) manifestInput() session.ManifestInput {
 // run still records the real input it was given. Caller ensures b != nil.
 func (a *Agent) applyInputIdentity(b *session.ManifestBuilder) {
 	in := a.manifestInput()
-	in.ResolvedBase = a.inputResolution.ResolvedBase
-	in.ResolvedHead = a.inputResolution.ResolvedHead
-	in.ExactRange = a.inputResolution.ExactRange
+	if a.args.ReviewSource == nil {
+		in.ResolvedBase = a.inputResolution.ResolvedBase
+		in.ResolvedHead = a.inputResolution.ResolvedHead
+		in.ExactRange = a.inputResolution.ExactRange
+	}
 	in.SourceArtifactSHA256 = a.sourceArtifactSHA256()
 	b.SetInput(in)
 
-	if id := a.repoRemoteIdentity; id != "" {
+	if a.args.ReviewSource != nil {
+		b.SetRepository(session.ManifestRepository{IdentitySHA256: a.args.SourceIdentity.RepositoryIdentitySHA256})
+	} else if id := a.repoRemoteIdentity; id != "" {
 		sum := sha256.Sum256([]byte(id))
 		b.SetRepository(session.ManifestRepository{IdentitySHA256: hex.EncodeToString(sum[:])})
 	}
@@ -1067,6 +1104,20 @@ func (a *Agent) finalizeManifest() error {
 	b := a.session.Manifest()
 	if b == nil {
 		return nil
+	}
+	if a.args.ReviewSource != nil {
+		receipt, err := a.args.ReviewSource.View().FinalizeReceipt(context.Background())
+		if err != nil {
+			return fmt.Errorf("finalize source receipt: %w", err)
+		}
+		b.SetSource(session.ManifestSource{
+			SchemaVersion:      receipt.SchemaVersion,
+			SnapshotRawSHA256:  a.args.SourceIdentity.SnapshotRawSHA256,
+			CaseManifestSHA256: a.args.SourceIdentity.CaseManifestRawSHA256,
+			QueryCount:         int64(receipt.QueryCount),
+			LedgerSHA256:       receipt.LedgerSHA256,
+			ReceiptSHA256:      receipt.ReceiptSHA256,
+		})
 	}
 	// Freeze the input/repository identity from this run's captured resolution and
 	// current selected set before the manifest closes. Done here (not in New) so

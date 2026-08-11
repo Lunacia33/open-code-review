@@ -28,10 +28,11 @@ const (
 )
 
 const (
-	ReviewModeWorkspace = "workspace"
-	ReviewModeRange     = "range"
-	ReviewModeCommit    = "commit"
-	ReviewModeFullScan  = "full_scan"
+	ReviewModeWorkspace   = "workspace"
+	ReviewModeRange       = "range"
+	ReviewModeCommit      = "commit"
+	ReviewModeP4Submitted = "p4-submitted"
+	ReviewModeFullScan    = "full_scan"
 )
 
 // SessionHistory is the top-level container for an entire CR run.

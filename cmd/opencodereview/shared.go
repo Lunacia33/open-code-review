@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -99,6 +100,57 @@ func loadCommonContext(repoDirInput, rulePath string, maxTools, maxGitProcs int,
 		GitRunner:  gitcmd.New(maxGitProcs),
 		IsGitRepo:  isGit,
 	}, nil
+}
+
+// loadSourceCommonContext loads review configuration for a non-Git source.
+// It deliberately performs no Git discovery and disables repo-local/global
+// rule auto-discovery. The runtime root is only an existing directory used for
+// session/output anchoring; source bytes come from the ReviewSource.
+func loadSourceCommonContext(repoDirInput, rulePath string, maxTools int) (*commonContext, error) {
+	tpl, err := template.LoadDefault()
+	if err != nil {
+		return nil, fmt.Errorf("load default template: %w", err)
+	}
+	if maxTools > tpl.MaxToolRequestTimes {
+		tpl.MaxToolRequestTimes = maxTools
+	}
+	if err := tpl.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	repoDir, err := resolveRuntimeRoot(repoDirInput)
+	if err != nil {
+		return nil, err
+	}
+	resolver, fileFilter, err := rules.NewSourceResolver(rulePath)
+	if err != nil {
+		return nil, fmt.Errorf("load source rules: %w", err)
+	}
+	return &commonContext{
+		Template:   tpl,
+		RepoDir:    repoDir,
+		Resolver:   resolver,
+		FileFilter: fileFilter,
+		IsGitRepo:  false,
+	}, nil
+}
+
+func resolveRuntimeRoot(input string) (string, error) {
+	if input == "" {
+		return "", errors.New("--repo is required for non-Git review sources")
+	}
+	absPath, err := filepath.Abs(input)
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute runtime root: %w", err)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("stat runtime root %s: %w", absPath, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("runtime root %s is not a directory", absPath)
+	}
+	return absPath, nil
 }
 
 // resolveWorkingDir returns (absPath, isGitRepo, err). When requireGit is

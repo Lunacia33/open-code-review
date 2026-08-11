@@ -20,7 +20,10 @@ import (
 // ManifestSchemaVersion identifies the versioned, machine-readable coverage
 // contract emitted for a review (or scan) run. Consumers should gate on this
 // value; unknown future versions must be ignored rather than misread.
-const ManifestSchemaVersion = "ocr.run-manifest/v1"
+const (
+	ManifestSchemaVersion   = "ocr.run-manifest/v1"
+	ManifestSchemaVersionV2 = "ocr.run-manifest/v2"
+)
 
 // OperationReview is the manifest operation for a diff review run. It is the
 // only operation wired in v1 (scan stays legacy with no manifest).
@@ -31,15 +34,16 @@ const OperationReview = "review"
 // interpreted. They also feed ItemID derivation so that the same logical file
 // keeps a stable item_id across a resume chain.
 const (
-	InputModeRange     = "range"
-	InputModeCommit    = "commit"
-	InputModeWorkspace = "workspace"
+	InputModeRange       = "range"
+	InputModeCommit      = "commit"
+	InputModeWorkspace   = "workspace"
+	InputModeP4Submitted = "p4-submitted"
 )
 
 // validInputMode reports whether m is one of the three mandatory input modes.
 func validInputMode(m string) bool {
 	switch m {
-	case InputModeRange, InputModeCommit, InputModeWorkspace:
+	case InputModeRange, InputModeCommit, InputModeWorkspace, InputModeP4Submitted:
 		return true
 	default:
 		return false
@@ -254,6 +258,21 @@ type ManifestInput struct {
 	ResolvedHead         string `json:"resolved_head,omitempty"`
 	ExactRange           string `json:"exact_range,omitempty"`
 	SourceArtifactSHA256 string `json:"source_artifact_sha256,omitempty"`
+	SourceManifestSHA256 string `json:"source_manifest_sha256,omitempty"`
+	SessionScopeSHA256   string `json:"session_scope_sha256,omitempty"`
+	SubmittedCL          int64  `json:"submitted_cl,omitempty"`
+}
+
+// ManifestSource records the independently auditable source-service receipt.
+// It is present only in ocr.run-manifest/v2. Raw source bytes, P4 credentials,
+// socket paths and depot connection details are deliberately excluded.
+type ManifestSource struct {
+	SchemaVersion      string `json:"schema_version"`
+	SnapshotRawSHA256  string `json:"snapshot_raw_sha256"`
+	CaseManifestSHA256 string `json:"case_manifest_raw_sha256"`
+	QueryCount         int64  `json:"query_count"`
+	LedgerSHA256       string `json:"ledger_sha256"`
+	ReceiptSHA256      string `json:"receipt_sha256"`
 }
 
 // ManifestExecution records how the run was executed. Only non-secret values
@@ -280,6 +299,7 @@ type RunManifest struct {
 	Repository    ManifestRepository `json:"repository"`
 	Input         ManifestInput      `json:"input"`
 	Execution     ManifestExecution  `json:"execution"`
+	Source        *ManifestSource    `json:"source,omitempty"`
 	Coverage      Coverage           `json:"coverage"`
 	RunFailure    *RunFailure        `json:"run_failure,omitempty"`
 	ElapsedMS     int64              `json:"elapsed_ms"`
@@ -331,12 +351,14 @@ type ManifestBuilder struct {
 	mu    sync.Mutex
 	items map[string]*builderItem
 
-	runID       string
-	parentRunID string
-	operation   string
-	repository  ManifestRepository
-	input       ManifestInput
-	execution   ManifestExecution
+	runID         string
+	parentRunID   string
+	operation     string
+	repository    ManifestRepository
+	input         ManifestInput
+	execution     ManifestExecution
+	schemaVersion string
+	source        *ManifestSource
 
 	runFailure     *RunFailure
 	pendingFailure *pendingFailureCause
@@ -350,9 +372,25 @@ type ManifestBuilder struct {
 // canonical session ID) and operation ("review" or "scan").
 func NewManifestBuilder(runID, operation string) *ManifestBuilder {
 	return &ManifestBuilder{
-		runID:     runID,
-		operation: operation,
-		items:     make(map[string]*builderItem),
+		runID:         runID,
+		operation:     operation,
+		items:         make(map[string]*builderItem),
+		schemaVersion: ManifestSchemaVersion,
+	}
+}
+
+// SetSource upgrades this builder to run-manifest/v2 and records the final
+// source-service receipt. Callers must supply only hash/count metadata.
+func (b *ManifestBuilder) SetSource(source ManifestSource) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.frozen {
+		copy := source
+		b.source = &copy
+		b.schemaVersion = ManifestSchemaVersionV2
 	}
 }
 
@@ -803,7 +841,7 @@ func (b *ManifestBuilder) Finalize(elapsed time.Duration) (RunManifest, error) {
 		return RunManifest{}, err
 	}
 	m := RunManifest{
-		SchemaVersion: ManifestSchemaVersion,
+		SchemaVersion: b.schemaVersion,
 		RunID:         b.runID,
 		ParentRunID:   b.parentRunID,
 		Operation:     b.operation,
@@ -811,6 +849,7 @@ func (b *ManifestBuilder) Finalize(elapsed time.Duration) (RunManifest, error) {
 		Repository:    b.repository,
 		Input:         b.input,
 		Execution:     b.execution,
+		Source:        b.source,
 		Coverage:      cov,
 		RunFailure:    b.runFailure,
 		ElapsedMS:     elapsed.Milliseconds(),
@@ -847,6 +886,18 @@ func (b *ManifestBuilder) validateLocked(cov Coverage) error {
 	}
 	if !validInputMode(b.input.Mode) {
 		return fmt.Errorf("manifest: invalid input.mode %q", b.input.Mode)
+	}
+	if b.schemaVersion == ManifestSchemaVersionV2 {
+		if b.input.Mode != InputModeP4Submitted {
+			return fmt.Errorf("manifest: v2 requires input.mode %q", InputModeP4Submitted)
+		}
+		if b.source == nil || b.source.SchemaVersion == "" || b.source.QueryCount < 0 ||
+			b.source.SnapshotRawSHA256 == "" || b.source.CaseManifestSHA256 == "" ||
+			b.source.LedgerSHA256 == "" || b.source.ReceiptSHA256 == "" {
+			return errors.New("manifest: v2 source receipt is incomplete")
+		}
+	} else if b.source != nil {
+		return errors.New("manifest: v1 cannot contain a source receipt")
 	}
 	// selected must be the disjoint union of the four terminal sets. The internal
 	// map already guarantees a single state per item_id, so this is a size check
@@ -887,6 +938,10 @@ func (m RunManifest) cloned() RunManifest {
 	if m.RunFailure != nil {
 		rf := *m.RunFailure
 		m.RunFailure = &rf
+	}
+	if m.Source != nil {
+		source := *m.Source
+		m.Source = &source
 	}
 	return m
 }

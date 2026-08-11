@@ -304,6 +304,31 @@ func NewResolver(repoDir, customRulePath string) (Resolver, *FileFilter, error) 
 	}, filter, nil
 }
 
+// NewSourceResolver builds the rule set for a non-Git review source. It never
+// discovers project-local or user-global rule files: only the embedded rules
+// and an explicitly supplied artifact are eligible. The caller is responsible
+// for verifying the explicit artifact against its source-manifest hash before
+// calling this function.
+func NewSourceResolver(customRulePath string) (Resolver, *FileFilter, error) {
+	sysRule, err := LoadDefault()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var customRule *ProjectRule
+	if customRulePath != "" {
+		customRule, err = loadRuleFile(customRulePath)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return &composedResolver{
+		custom: customRule,
+		system: sysRule,
+	}, buildFileFilter(customRule), nil
+}
+
 // buildFileFilter picks the highest-priority layer that has any include/exclude
 // configured. Priority order: custom (--rule) > project > global.
 func buildFileFilter(layers ...*ProjectRule) *FileFilter {

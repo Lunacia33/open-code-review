@@ -35,4 +35,19 @@ type Preview struct {
 	TotalFiles      int            `json:"total_files"`
 	ReviewableCount int            `json:"reviewable_count"`
 	ExcludedCount   int            `json:"excluded_count"`
+	Source          *PreviewSource `json:"source,omitempty"`
+}
+
+// PreviewSource carries the same source identity and final audit receipt used
+// by a P4 run manifest, without exposing connection details or raw paths.
+type PreviewSource struct {
+	InputMode                string `json:"input_mode"`
+	RepositoryIdentitySHA256 string `json:"repository_identity_sha256"`
+	SourceManifestSHA256     string `json:"source_manifest_sha256"`
+	SessionScopeSHA256       string `json:"session_scope_sha256"`
+	SubmittedCL              int64  `json:"submitted_cl"`
+	ReceiptSchema            string `json:"receipt_schema"`
+	QueryCount               int    `json:"query_count"`
+	LedgerSHA256             string `json:"ledger_sha256"`
+	ReceiptSHA256            string `json:"receipt_sha256"`
 }
